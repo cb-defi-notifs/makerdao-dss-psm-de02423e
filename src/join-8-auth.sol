@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-/// join-5-auth.sol -- Non-standard token adapters
+/// join-8-auth.sol -- Non-standard token adapters
 
 // Copyright (C) 2018 Rain <rainbreak@riseup.net>
 // Copyright (C) 2018-2020 Maker Ecosystem Growth Holdings, INC.
+// Copyright (C) 2021 Dai Foundation
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU Affero General Public License as published by
@@ -28,11 +29,13 @@ interface GemLike {
     function decimals() external view returns (uint8);
     function transfer(address, uint256) external returns (bool);
     function transferFrom(address, address, uint256) external returns (bool);
+    function erc20Impl() external view returns (address);
 }
 
-// Authed GemJoin for a token that has a lower precision than 18 and it has decimals (like USDC)
+// AuthGemJoin8
+// For a token that has a lower precision than 18, has decimals and it is upgradable (like GUSD)
 
-contract AuthGemJoin5 {
+contract AuthGemJoin8 {
     // --- Auth ---
     mapping (address => uint256) public wards;
     function rely(address usr) external auth {
@@ -57,14 +60,18 @@ contract AuthGemJoin5 {
     event Cage();
     event Join(address indexed urn, uint256 amt, address indexed msgSender);
     event Exit(address indexed usr, uint256 amt);
+    event SetImplementation(address indexed implementation, uint256 permitted);
+
+    mapping (address => uint256) public implementations;
 
     constructor(address vat_, bytes32 ilk_, address gem_) public {
         gem = GemLike(gem_);
         uint256 dec_ = dec = GemLike(gem_).decimals();
-        require(dec_ < 18, "AuthGemJoin5/decimals-18-or-higher");
+        require(dec_ < 18, "AuthGemJoin8/decimals-18-or-higher");
         wards[msg.sender] = 1;
         emit Rely(msg.sender);
         live = 1;
+        setImplementation(GemLike(gem_).erc20Impl(), 1);
         vat = VatLike(vat_);
         ilk = ilk_;
     }
@@ -74,24 +81,31 @@ contract AuthGemJoin5 {
         emit Cage();
     }
 
+    function setImplementation(address implementation, uint256 permitted) public auth {
+        implementations[implementation] = permitted;  // 1 live, 0 disable
+        emit SetImplementation(implementation, permitted);
+    }
+
     function mul(uint256 x, uint256 y) internal pure returns (uint256 z) {
-        require(y == 0 || (z = x * y) / y == x, "AuthGemJoin5/overflow");
+        require(y == 0 || (z = x * y) / y == x, "AuthGemJoin8/overflow");
     }
 
     function join(address urn, uint256 amt, address msgSender) external auth {
-        require(live == 1, "AuthGemJoin5/not-live");
+        require(live == 1, "AuthGemJoin8/not-live");
         uint256 wad = mul(amt, 10 ** (18 - dec));
-        require(int256(wad) >= 0, "AuthGemJoin5/overflow");
+        require(int256(wad) >= 0, "AuthGemJoin8/overflow");
+        require(implementations[gem.erc20Impl()] == 1, "AuthGemJoin8/implementation-invalid");
         vat.slip(ilk, urn, int256(wad));
-        require(gem.transferFrom(msgSender, address(this), amt), "AuthGemJoin5/failed-transfer");
+        require(gem.transferFrom(msgSender, address(this), amt), "AuthGemJoin8/failed-transfer");
         emit Join(urn, amt, msgSender);
     }
 
     function exit(address usr, uint256 amt) external {
         uint256 wad = mul(amt, 10 ** (18 - dec));
-        require(int256(wad) >= 0, "AuthGemJoin5/overflow");
+        require(int256(wad) >= 0, "AuthGemJoin8/overflow");
+        require(implementations[gem.erc20Impl()] == 1, "AuthGemJoin8/implementation-invalid");
         vat.slip(ilk, msg.sender, -int256(wad));
-        require(gem.transfer(usr, amt), "AuthGemJoin5/failed-transfer");
+        require(gem.transfer(usr, amt), "AuthGemJoin8/failed-transfer");
         emit Exit(usr, amt);
     }
 }
